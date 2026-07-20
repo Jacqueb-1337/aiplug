@@ -1,0 +1,1 @@
+Trigger Baritone 26.1.2 water platform edge placement fix build.
