@@ -1,9 +1,6 @@
 name: Build patched Baritone 26.1.2
 
 on:
-  push:
-    branches:
-      - baritone-26.1.2-waterlogged-slab-build
   pull_request:
     branches:
       - main
