@@ -1,1 +1,2 @@
 Temporary CI trigger for the patched Baritone 26.1.2 Fabric build.
+Run after workflow was added to main.
