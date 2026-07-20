@@ -1,0 +1,104 @@
+name: Build patched Baritone 26.1.2
+
+on:
+  push:
+    branches:
+      - baritone-26.1.2-waterlogged-slab-build
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out Baritone 26.1 port
+        uses: actions/checkout@v4
+        with:
+          repository: fnltochka/baritone
+          ref: 26.1
+          fetch-depth: 1
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "25"
+          cache: gradle
+
+      - name: Patch waterlogged slab handling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/main/java/baritone/pathing/movement/MovementHelper.java")
+          source = path.read_text(encoding="utf-8")
+
+          water = """        if (isWater(state)) {
+                      return MAYBE;
+                  }
+          """
+          slab = """        if (block instanceof SlabBlock) {
+                      if (!Baritone.settings().allowWalkOnBottomSlab.value) {
+                          if (state.getValue(SlabBlock.TYPE) != SlabType.BOTTOM) {
+                              return YES;
+                          }
+                          return NO;
+                      }
+                      return YES;
+                  }
+          """
+
+          if source.count(water) != 1:
+              raise RuntimeError(f"Expected one water support check, found {source.count(water)}")
+          if source.count(slab) != 1:
+              raise RuntimeError(f"Expected one slab support check, found {source.count(slab)}")
+          if source.index(slab) < source.index(water):
+              raise RuntimeError("Source already handles slabs before water")
+
+          source = source.replace(water, "", 1)
+          source = source.replace(slab, slab + water, 1)
+          path.write_text(source, encoding="utf-8")
+
+          patched = path.read_text(encoding="utf-8")
+          if patched.index(slab) > patched.index(water):
+              raise RuntimeError("Patch verification failed")
+
+          print("Patched canWalkOnBlockState so SlabBlock is evaluated before fluid state.")
+
+      - name: Build Fabric distribution
+        run: |
+          chmod +x gradlew
+          ./gradlew clean :fabric:build -Pmod_version=1.17.0-waterlogged-slab-fix --stacktrace
+
+      - name: Collect jars
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p patched-jars
+          find dist fabric/build/libs -type f -name '*.jar' -print 2>/dev/null | while read -r jar; do
+            cp "$jar" patched-jars/
+          done
+          cat > patched-jars/BUILD_INFO.txt <<'EOF'
+          Target: Minecraft 26.1.2
+          Loader: Fabric Loader 0.19.3 or newer
+          Java: 25
+          Source: fnltochka/baritone branch 26.1, Baritone upstream PR 4990
+          Patch: Treat SlabBlock as slab before checking its fluid state in canWalkOnBlockState.
+          Purpose: Allow waterlogged top and bottom slabs without enabling open-water walking.
+          EOF
+          sha256sum patched-jars/*.jar | tee patched-jars/SHA256SUMS.txt
+          ls -lah patched-jars
+
+      - name: Upload patched jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: baritone-26.1.2-waterlogged-slab-fix
+          path: patched-jars/
+          if-no-files-found: error
+          retention-days: 7
